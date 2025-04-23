@@ -14,6 +14,7 @@
 #define PWD 2
 #define REDIRECT 3
 #define BACKGROUND 4
+#define SKIP 10
 int bg_in_process = 0;
 pid_t *bg_process_pids;
 char bg_cmd[CMDLINE_MAX];
@@ -66,7 +67,7 @@ void parse_command(char *input, struct cmd_string *cmd, int type) { //pass in po
             }
             if(k == ARG_MAX+1){
                 fprintf(stderr,"Error: too many process arguments\n");
-                exit(2);
+                exit(SKIP);
             }
         }
         cmd->argc=k;
@@ -78,24 +79,36 @@ void redirect(struct cmd_string *cmd){
                 char* output_filename= strtok(cmd->raw, ">");
                 output_filename = strtok(NULL, ">");
                 output_filename = strtok(output_filename," ");
-                int fd = open(output_filename, O_CREAT | O_WRONLY, 0644);
+                if(output_filename == NULL){
+                        fprintf(stderr,"Error: no output file\n");
+                        exit(SKIP);
+                }
+                int fd = open(output_filename, O_CREAT | O_WRONLY | O_TRUNC, 0644);
                 dup2(fd,STDOUT_FILENO);
                 dup2(fd,STDERR_FILENO);
                 close(fd);
                 execvp(cmd->argv[0], cmd->argv);
                 fprintf(stderr,"Error: command not found\n");
-                exit(EXIT_FAILURE);
+                exit(SKIP);
         }
         else{
                 char* output_filename = strtok(cmd->raw, "<");
                 output_filename = strtok(NULL, "<");
                 output_filename = strtok(output_filename," ");
+                if(output_filename == NULL){
+                        fprintf(stderr,"Error: no input file\n");
+                        exit(SKIP);
+                }
                 int fd = open(output_filename, O_RDONLY, 0644);
+                if(fd == -1){
+                        fprintf(stderr,"Error: cannot open input file\n");
+                        exit(SKIP);
+                }
                 dup2(fd,STDIN_FILENO);
                 close(fd);
                 execvp(cmd->argv[0], cmd->argv);
                 fprintf(stderr,"Error: command not found\n");
-                exit(EXIT_FAILURE);
+                exit(SKIP);
         }
 }
 
@@ -133,17 +146,16 @@ struct cmd_string* split_cmd(char *cmd, int *count){
     return commands;
 }
 //MULTIPIPE FUNCTION
-int* multipipe(char *command,int* count, int *pids){
+int* multipipe(char *command,int* count){
         //you know implicitly that commands are piped
         struct cmd_string* commands = split_cmd(command,count);
         int *status = (int*)malloc(*count*sizeof(int));
-        pids = (int*)malloc(*count*sizeof(int));
-        int **pipes = (int**)malloc(*count*sizeof(int*));
-
+        int *pids = (int*)malloc(*count*sizeof(int));
+        int **pipes = (int**)malloc((*count-1)*sizeof(int*));
         //create pipes
-        for(int i = 0; i < *count; i++){
-            pipes[i] = (int*)malloc(2*sizeof(int));
-            pipe(pipes[i]);
+        for(int i = 0; i < *count-1; i++){
+                pipes[i] = (int*)malloc(2*sizeof(int));
+                pipe(pipes[i]);
         }
         //run cmds
         int i = 0;
@@ -151,6 +163,25 @@ int* multipipe(char *command,int* count, int *pids){
             if(i==0){
                 //START only change output on first command
                 if(!(pids[i]=fork())){
+                        // Close all unneeded FDs
+                        for (int j = 0; j < *count - 1; j++) {
+                                int uses_read_end = 0;
+                                if (i > 0 && j == i - 1) {
+                                        uses_read_end = 1;
+                                }
+
+                                int uses_write_end = 0;
+                                if (i < *count - 1 && j == i) {
+                                        uses_write_end = 1;
+                                }
+
+                                if (uses_read_end == 0) {
+                                        close(pipes[j][0]);  // I don't need the read end of this pipe
+                                }
+                                if (uses_write_end == 0) {
+                                        close(pipes[j][1]);  // I don't need the write end of this pipe
+                                }
+                        }
                         if(strchr(commands[i].raw, '<') != NULL){
                                 struct cmd_string last;
                                 parse_command(commands[i].raw,&last,REDIRECT);
@@ -169,12 +200,36 @@ int* multipipe(char *command,int* count, int *pids){
                 else{
                         //close pipes in parent
                         close(pipes[i][1]);
+                        if (i > 0) close(pipes[i-1][0]);
                 }
             }
             else if(i+1 == *count){
                 //END change output back to terminal read from previous pipe on last command
                 if(!(pids[i]=fork())){
-                        if(strchr(commands[i].raw, '>') != NULL){
+                        // Close all unneeded FDs
+                        for (int j = 0; j < *count - 1; j++) {
+                                int uses_read_end = 0;
+                                if (i > 0 && j == i - 1) {
+                                        uses_read_end = 1;
+                                }
+
+                                int uses_write_end = 0;
+                                if (i < *count - 1 && j == i) {
+                                        uses_write_end = 1;
+                                }
+
+                                if (uses_read_end == 0) {
+                                        close(pipes[j][0]);  // I don't need the read end of this pipe
+                                }
+                                if (uses_write_end == 0) {
+                                        close(pipes[j][1]);  // I don't need the write end of this pipe
+                                }
+                        }
+                        if(strchr(commands[i].raw, '>') != NULL || strchr(commands[i].raw, '<') != NULL){
+                                if(strchr(commands[i].raw, '<') != NULL){
+                                        fprintf(stderr,"Error: mislocated input redirection\n");
+                                        exit(SKIP);        
+                                }
                                 struct cmd_string last;
                                 parse_command(commands[i].raw,&last,REDIRECT);
                                 dup2(pipes[i-1][0],STDIN_FILENO);
@@ -182,7 +237,6 @@ int* multipipe(char *command,int* count, int *pids){
                                 redirect(&last);
                         }
                         else{
-                                dup2(STDOUT_FILENO,STDOUT_FILENO);
                                 dup2(pipes[i-1][0],STDIN_FILENO);
                                 close(pipes[i-1][0]);
                                 execvp(commands[i].argv[0],commands[i].argv);
@@ -198,6 +252,31 @@ int* multipipe(char *command,int* count, int *pids){
             else{
                 //MIDDLE
                 if(!(pids[i]=fork())){
+
+                        
+                        // Close all unneeded FDs
+                        for (int j = 0; j < *count - 1; j++) {
+                                int uses_read_end = 0;
+                                if (i > 0 && j == i - 1) {
+                                        uses_read_end = 1;
+                                }
+
+                                int uses_write_end = 0;
+                                if (i < *count - 1 && j == i) {
+                                        uses_write_end = 1;
+                                }
+
+                                if (uses_read_end == 0) {
+                                        close(pipes[j][0]);  // I don't need the read end of this pipe
+                                }
+                                if (uses_write_end == 0) {
+                                        close(pipes[j][1]);  // I don't need the write end of this pipe
+                                }
+                        }
+
+
+
+
                         dup2(pipes[i][1],STDOUT_FILENO);
                         dup2(pipes[i-1][0],STDIN_FILENO);
                         close(pipes[i][1]);
@@ -214,12 +293,15 @@ int* multipipe(char *command,int* count, int *pids){
             }
             i++;
         }
+        for(int i = 0; i < *count-1;i++){
+                free(pipes[i]);
+        }
         for(int k = 0; k < *count; k++){
             //collect status
             //printf("pidk: %d\n",pids[k]);
-            free(pipes[k]);
             waitpid(pids[k],&status[k],0);
         }
+        free(pids);
         free(pipes);
         return status;
 }
@@ -287,7 +369,6 @@ int main(void){
 
         while (1) {
                 char *nl;
-                monitor_bg();
 
                 //////////his code///////////////////////////////////////////////
                 /* Print prompt */
@@ -330,14 +411,12 @@ int main(void){
                                         *(--amp) = '\0'; // Remove trailing spaces
                                 }
                         }
-                                
                 }
                 /* Builtin commands */
                 if (!strcmp(cmd, "exit")) {
                         monitor_bg();
                         if(bg_in_process){
-                                fprintf(stderr, "Error: active job still running");
-                                fprintf(stderr, "* completed 'exit' [1]");
+                                fprintf(stderr, "Error: active job still running\n");
                                 continue;
                         }
                         fprintf(stderr, "Bye...\n");
@@ -361,6 +440,7 @@ int main(void){
                     	char* buffer = NULL;
                     	buffer = getcwd(buffer, CMDLINE_MAX);
                     	fprintf(stderr, "%s\n",buffer);
+                        fprintf(stderr, "+ completed '%s' [0]\n", cmd);
                     	continue;
                 }
                 //PWD COMMAND^^^^
@@ -369,11 +449,18 @@ int main(void){
                 if(strchr(cmd, '|') != NULL){
                         int* exitStatus;
                         int count = 0;
-                        int *pids = NULL;
-                        exitStatus=multipipe(cmd,&count,pids);
+                        int x = 0;
+                        exitStatus=multipipe(cmd,&count);
+                        for(int i = 0; i < count; i++){
+                                if(WEXITSTATUS(exitStatus[i])==SKIP){
+                                        x = 1;
+                                }
+                        }
+                        if(x)
+                                continue;
                         fprintf(stderr, "+ completed '%s' ", cmd);
                         for(int i = 0; i <count; i++){
-                                fprintf(stderr,"[%d]",exitStatus[i]);
+                                fprintf(stderr,"[%d]",WEXITSTATUS(exitStatus[i]));
                         }
                         fprintf(stderr, "\n");
                         free(exitStatus);
@@ -403,8 +490,9 @@ int main(void){
 
                         } else {
                             waitpid(pid, &status, 0);
+                            monitor_bg();
                             if (WIFEXITED(status)) {
-                                        if (WEXITSTATUS(status) != 2) {
+                                        if (WEXITSTATUS(status) != SKIP) {
                                             fprintf(stderr, "+ completed '%s' [%d]\n", cmd, WEXITSTATUS(status));
                                         }
                             } else {
@@ -416,7 +504,6 @@ int main(void){
                         //CHILD PROCESS/////////////////////////////////////////////////////////////////
                         //get
                         //fprintf(stderr, "[debug] execing in child, pid = %d\n", getpid());
-
                         if (strchr(cmd, '>') != NULL || strchr(cmd, '<') != NULL) {
                                 parse_command(cmd, &command, REDIRECT);
                                 redirect(&command);
