@@ -15,12 +15,12 @@
 #define REDIRECT 3
 #define BACKGROUND 4
 #define SKIP 10
-
 int bg_output_fd = -1;
+
 int bg_in_process = 0;
 pid_t *bg_process_pids;
 char bg_cmd[CMDLINE_MAX];
-int bg_count =0;
+int bg_count = 0;
 
 //struct definition
 struct cmd_string {
@@ -35,13 +35,11 @@ void parse_command(char *input, struct cmd_string *cmd, int type) { //pass in po
         char *x;
         x = (char*)malloc(strlen(input)+1);
         strcpy(x,input);
-        //printf("x is: %s\n",x);
         int k = 0; //start at beginning of command
         int stop = 0;
         char *arg = strtok(x, " "); //break up by whitespace
         while (arg != NULL) { //until eof
                 cmd->argv[k++] = arg; //continue to move down the line
-                //printf("arg: %s\n",arg);
                 arg = strtok(NULL, " ");
                 if(type == CDCHECK){//for CD
                         stop++;
@@ -170,7 +168,7 @@ int* multipipe(char *command,int* count, int bg_flag, pid_t **bg_pids_output){
         int i = 0;
         while(i != *count){
             if(i==0){
-                //START only change output on first command
+                //only change output on first command
                 if(!(pids[i]=fork())){
                         // Close all unneeded FDs
                         for (int j = 0; j < *count - 1; j++) {
@@ -213,9 +211,8 @@ int* multipipe(char *command,int* count, int bg_flag, pid_t **bg_pids_output){
                 }
             }
             else if(i+1 == *count){
-                //END change output back to terminal read from previous pipe on last command
                 if(!(pids[i]=fork())){
-                        // Close all unneeded FDs
+                        //close all unneeded FDs
                         for (int j = 0; j < *count - 1; j++) {
                                 int uses_read_end = 0;
                                 if (i > 0 && j == i - 1) {
@@ -228,10 +225,10 @@ int* multipipe(char *command,int* count, int bg_flag, pid_t **bg_pids_output){
                                 }
 
                                 if (uses_read_end == 0) {
-                                        close(pipes[j][0]);  // I don't need the read end of this pipe
+                                        close(pipes[j][0]);  //I don't need the read end of this pipe
                                 }
                                 if (uses_write_end == 0) {
-                                        close(pipes[j][1]);  // I don't need the write end of this pipe
+                                        close(pipes[j][1]);  //I don't need the write end of this pipe
                                 }
                         }
                         if(strchr(commands[i].original_command, '>') != NULL || strchr(commands[i].original_command, '<') != NULL){
@@ -243,8 +240,8 @@ int* multipipe(char *command,int* count, int bg_flag, pid_t **bg_pids_output){
                                 parse_command(commands[i].original_command,&last,REDIRECT);
                                 dup2(pipes[i-1][0],STDIN_FILENO);
                                 if (bg_flag) {
-                                        dup2(output_pipe[1], STDOUT_FILENO); // send output to pipe
-                                        close(output_pipe[0]);               // close read end in child
+                                        dup2(output_pipe[1], STDOUT_FILENO); //send output to pipe
+                                        close(output_pipe[0]);               //close read end
                                 }
                                 close(pipes[i-1][0]);
                                 redirect(&last);
@@ -252,8 +249,8 @@ int* multipipe(char *command,int* count, int bg_flag, pid_t **bg_pids_output){
                         else{
                                 dup2(pipes[i-1][0],STDIN_FILENO);
                                 if (bg_flag) {
-                                        dup2(output_pipe[1], STDOUT_FILENO); // send output to pipe
-                                        close(output_pipe[0]);               // close read end in child
+                                        dup2(output_pipe[1], STDOUT_FILENO); //send output to pipe
+                                        close(output_pipe[0]);               //close read end
                                 }
                                 close(pipes[i-1][0]);
                                 execvp(commands[i].argv[0],commands[i].argv);
@@ -266,17 +263,16 @@ int* multipipe(char *command,int* count, int bg_flag, pid_t **bg_pids_output){
                         close(pipes[i-1][0]);
 
                         if (bg_flag) {
-                                close(output_pipe[1]);         // parent doesn't write
-                                bg_output_fd = output_pipe[0]; // parent stores read end for deferred output
+                                close(output_pipe[1]);         //parent doesn't write
+                                bg_output_fd = output_pipe[0]; //parent stores read end
                         }
                 }
             }
             else{
-                //MIDDLE
                 if(!(pids[i]=fork())){
 
                         
-                        // Close all unneeded FDs
+                        //close all unneeded FDs
                         for (int j = 0; j < *count - 1; j++) {
                                 int uses_read_end = 0;
                                 if (i > 0 && j == i - 1) {
@@ -289,10 +285,10 @@ int* multipipe(char *command,int* count, int bg_flag, pid_t **bg_pids_output){
                                 }
 
                                 if (uses_read_end == 0) {
-                                        close(pipes[j][0]);  // I don't need the read end of this pipe
+                                        close(pipes[j][0]);  //I don't need the read end of this pipe
                                 }
                                 if (uses_write_end == 0) {
-                                        close(pipes[j][1]);  // I don't need the write end of this pipe
+                                        close(pipes[j][1]);  //I don't need the write end of this pipe
                                 }
                         }
 
@@ -323,7 +319,6 @@ int* multipipe(char *command,int* count, int bg_flag, pid_t **bg_pids_output){
         else{
                 for(int k = 0; k < *count; k++){
                 //collect status
-                //printf("pidk: %d\n",pids[k]);
                         waitpid(pids[k],&status[k],0);
                 }
                 for(int i = 0; i < *count-1;i++){
@@ -362,10 +357,10 @@ void monitor_bg() {
                 pid_t result = waitpid(bg_process_pids[i], &status, WNOHANG);
 
                 if (result == 0) {
-                        finished = 0;  // still running
+                        finished = 0;  //still running
                 } 
                 else if (result == -1) {
-                        // ignore error for now
+                        //ignore error for now
                 } 
                 else {
                         statuses[i] = status;
@@ -374,7 +369,7 @@ void monitor_bg() {
 
         if (!finished) return;
 
-        // Background job is done
+        //background job done
         if (bg_output_fd != -1) {
                 char buf[1024];
                 ssize_t n;
@@ -449,7 +444,6 @@ int main(void){
                 strncpy(original_cmd, cmd, CMDLINE_MAX);
 
                 //no segfault at enter
-                /**/
                 if (cmd[0] == '\0') {
                         monitor_bg();
     			continue;
@@ -457,14 +451,14 @@ int main(void){
 
                 int bg_flag = check_background(cmd);
                 if (bg_flag == -1) {
-                        continue; // Mislocated '&'
+                        continue; 
                 }
                 if (bg_flag == 1) {
                         char *amp = strchr(cmd, '&');
                         if (amp) {
-                                *amp = '\0'; // Remove the '&'
+                                *amp = '\0'; 
                                 while (amp > cmd && *(amp - 1) == ' ') {
-                                        *(--amp) = '\0'; // Remove trailing spaces
+                                        *(--amp) = '\0'; //remove extra spaces
                                 }
                         }
                 }
@@ -531,7 +525,7 @@ int main(void){
                 }
                 //PIPELINING^^^^^^
 
-               /* Regular command */
+               //regular command
                 pid_t pid = fork();
 
                 if(pid > 0){
@@ -567,7 +561,6 @@ int main(void){
                 }
                 else if(pid==0){
                         //CHILD PROCESS/////////////////////////////////////////////////////////////////
-                        //get
                         if (strchr(cmd, '>') != NULL || strchr(cmd, '<') != NULL) {
                                 parse_command(cmd, &command, REDIRECT);
                                 redirect(&command);
